@@ -1,22 +1,130 @@
 ---
-title: "PML Course Project"
+title: "Practical Machine Learning - Prediction Assignment"
 author: "az"
 date: "Tuesday, December 22, 2015"
-output: html_document
+output:
+  html_document:
+    theme: journal
 ---
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+###Report Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. This report will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants who were asked to perform barbell lifts correctly and incorrectly in 5 different ways in order to predict classe variable. More information available from: http://groupware.les.inf.puc-rio.br/har (see the section on Weight lifting exercise dataset). 
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+###Report Summary  
+1. Download and clean the training and hold out testing data
+2. Split the training data further into training and testing subsets
+3. Apply cross validation prediction models to training subset and evaluate sample error rates
+4. Select model with best accuracy and apply to hold out testing data
+5. Predict classe variable for testing data
+6. Plot prediction model in appendix
+7. Acknowledments to Coursera Data Science community for inspiration to complete this project
 
 ```{r}
-summary(cars)
+#Set working directory and install R packages
+setwd("~/Coursera/PML")
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
 ```
 
-You can also embed plots, for example:
+Download training and test data (performed offline to avoid slow download time delay)  
 
+trainUrl <-"http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"  
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"  
+download.file(trainUrl, destfile="./pml-training.csv")  
+download.file(testUrl, destfile="./pml-testing.csv")  
+
+```{r}
+#Read data and verify content
+trainRaw <- read.csv("./pml-training.csv")
+testRaw <- read.csv("./pml-testing.csv")
+dim(trainRaw)
+dim(testRaw)
+```
+
+```{r}
+#Clean the data
+#Remove zero and near zero-variance predictors that may cause non tree-based models to crash
+n0v <- nearZeroVar(trainRaw, saveMetrics = T)
+train <- trainRaw[, !n0v$nzv]
+
+# remove variables with more than 80% missing values
+NAv <- sapply(colnames(train), function(x) if(sum(is.na(train[, x])) > 0.8*nrow(train)){return(T)}else{return(F)})
+train <- train[, !NAv]
+
+#Remove time and date variables not related to movement activity
+classe <- train$classe
+trainRemoveTimeDate <- grepl("^X|timestamp|window", names(train))
+train <- train[, !trainRemoveTimeDate]
+train <- train[, sapply(train, is.numeric)]
+train$classe <- classe
+
+testRemoveTimeDate <- grepl("^X|timestamp|window", names(testRaw))
+test <- testRaw[, !testRemoveTimeDate]
+test <- test[, sapply(test, is.numeric)]
+```
+
+The clean training data contains 19622 observations with 53 variables  
+The clean testing data contains 20 observations with 53 variables  
+
+```{r}
+#create 75%/25% train/test dataset
+inTrain <- createDataPartition(train$classe, p=0.75, list=FALSE)
+trainData <- train[inTrain, ]
+testData <- train[-inTrain, ]
+```
+
+```{r}
+#Run Boosting with trees prediction model with gbm option
+#Resample with 3 fold cross-validations (to limit processing time)
+set.seed(666)
+boostFit <- train(classe ~ ., method = "gbm", data = trainData, verbose = F,trControl=trainControl(method="cv",number=3))
+boostFit
+```
+
+```{r}
+#Apply Boosting model to test data and evaluate accuracy 
+BoostPredict<-predict(boostFit,testData)
+confusionMatrix(testData$classe,BoostPredict)
+B_accuracy <- postResample(BoostPredict, testData$classe)
+paste("Boosting model accuracy: ",round(B_accuracy[1]*100,2),"%  ",
+      "out of sample error: ",round((1-B_accuracy[1])*100,2),"%")
+```
+
+```{r}
+#Run Random Forest prediction model
+#Resample with 3 fold cross-validations (to limit processing time)
+set.seed(666)
+rf <- train(classe ~ .,method="rf",data=trainData,trControl=trainControl(method="cv",number=3),ntree=150)
+rf
+```
+
+```{r}
+#Apply Random Forest model to test data and evaluate accuracy 
+RFPredict<-predict(rf,testData)
+confusionMatrix(testData$classe,RFPredict)
+RF_accuracy <- postResample(RFPredict, testData$classe)
+paste("Random Forest model accuracy: ",round(RF_accuracy[1]*100,2),"%  ",
+      "out of sample error: ",round((1-RF_accuracy[1])*100,2),"%")
+```
+
+Two prediction models were applied to the training subset data.  
+Both models were resampled with 3 fold cross-validation to limit processing time.  
+Boosting model gave accuracy of 96% and out of sample error of 4%.  
+Random Forest model gave better accuracy of 99% and out of sample error of 1% and is selected to predict project test case answers from the hold out test data.  
+
+```{r}
+#Predict on test to answer project test cases
+answers=(RFPrediction <- as.character(predict(rf, test)))
+answers
+```
+
+---
+###Appendix
+Plot of Random Forest model classification tree
 ```{r, echo=FALSE}
-plot(cars)
+RF_TreeModel <- rpart(classe ~ ., data=trainData, method="class")
+prp(RF_TreeModel) 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
